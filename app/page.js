@@ -1,41 +1,46 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { supabase } from "@/lib/supabase";
 
 export default function Home() {
-  const [data, setData] = useState([]);
+  const [phone, setPhone] = useState("");
+  const [amount, setAmount] = useState("");
 
-  async function loadData() {
-    const { data, error } = await supabase.from("test").select("*");
+  async function handlePay() {
+    const { error } = await supabase.from("transactions").insert([
+      {
+        phone,
+        amount,
+        status: "PENDING",
+      },
+    ]);
 
     if (error) {
-      console.error("Error:", error);
+      alert("Error: " + error.message);
       return;
     }
 
-    setData(data);
+    alert("Payment request created");
   }
 
-  useEffect(() => {
-    loadData();
-  }, []);
-
   return (
-    <div style={{ padding: 40, fontFamily: "Arial" }}>
-      <h1>🚀 Fintech System Connected</h1>
+    <div style={{ padding: 40 }}>
+      <h1>💰 Payment Test</h1>
 
-      <button onClick={loadData} style={{ padding: 10, marginTop: 20 }}>
-        Refresh Data
-      </button>
+      <input
+        placeholder="Phone"
+        onChange={(e) => setPhone(e.target.value)}
+      />
+      <br /><br />
 
-      <div style={{ marginTop: 20 }}>
-        {data.map((item) => (
-          <p key={item.id}>
-            {item.id} → {item.name}
-          </p>
-        ))}
-      </div>
+      <input
+        placeholder="Amount"
+        onChange={(e) => setAmount(e.target.value)}
+      />
+      <br /><br />
+
+      <button onClick={handlePay}>Pay</button>
     </div>
   );
 }
