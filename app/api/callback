@@ -1,0 +1,78 @@
+import { createClient } from "@supabase/supabase-js";
+
+const supabase = createClient(
+  process.env.SUPABASE_URL,
+  process.env.SUPABASE_SERVICE_ROLE_KEY
+);
+
+export async function POST(req) {
+  try {
+    const body = await req.json();
+
+    console.log("📩 M-Pesa Callback Received:", JSON.stringify(body, null, 2));
+
+    // 1. Extract core callback data
+    const callback =
+      body?.Body?.stkCallback || body?.stkCallback || body;
+
+    const checkoutRequestID = callback?.CheckoutRequestID;
+    const resultCode = callback?.ResultCode;
+    const resultDesc = callback?.ResultDesc;
+
+    if (!checkoutRequestID) {
+      console.log("❌ Missing CheckoutRequestID");
+      return Response.json({ ok: false });
+    }
+
+    // 2. Find transaction
+    const { data: tx, error: txError } = await supabase
+      .from("stk_transactions")
+      .select("*")
+      .eq("checkout_request_id", checkoutRequestID)
+      .single();
+
+    if (txError || !tx) {
+      console.log("❌ Transaction not found:", txError);
+      return Response.json({ ok: false });
+    }
+
+    // 3. Insert into mpesa_callbacks (THIS WAS MISSING)
+    const { error: insertError } = await supabase
+      .from("mpesa_callbacks")
+      .insert([
+        {
+          stk_transaction_id: tx.id,
+          callback_data: body,
+          result_code: resultCode?.toString(),
+          result_desc: resultDesc,
+          status: resultCode === 0 ? "PROCESSED" : "FAILED",
+        },
+      ]);
+
+    if (insertError) {
+      console.log("❌ Callback insert failed:", insertError);
+    }
+
+    // 4. Update transaction status
+    await supabase
+      .from("stk_transactions")
+      .update({
+        status: resultCode === 0 ? "SUCCESS" : "FAILED",
+        callback_processed: true,
+        updated_at: new Date().toISOString(),
+      })
+      .eq("id", tx.id);
+
+    console.log("✅ Callback processed successfully");
+
+    return Response.json({ ResultCode: 0, ResultDesc: "Accepted" });
+
+  } catch (err) {
+    console.error("🔥 Callback error:", err);
+
+    return new Response(
+      JSON.stringify({ error: "callback failed" }),
+      { status: 500 }
+    );
+  }
+}
