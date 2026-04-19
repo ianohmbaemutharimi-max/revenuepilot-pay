@@ -1,49 +1,53 @@
-import { supabase } from "@/lib/supabase";
-import { stkPush } from "@/lib/stk";
+import axios from "axios";
+import { getAccessToken } from "./daraja";
 
 /**
- * 🧠 STEP 3: Main payment entry point
+ * 🧠 STK PUSH MODULE
+ * - Sends payment request to user's phone
+ * - Returns Daraja response
  */
-export default async function handler(req, res) {
-  const { phone, amount, business_id } = req.body;
 
-  // STEP 3.1 — Create transaction first
-  const { data: tx, error } = await supabase
-    .from("stk_transactions")
-    .insert({
-      phone,
-      amount,
-      business_id,
-      status: "CREATED", // means not sent yet
-    })
-    .select()
-    .single();
+export async function stkPush(phone, amount, accountRef) {
+  const token = await getAccessToken();
 
-  if (error) return res.status(500).json(error);
+  // ⏱ required timestamp format
+  const timestamp = new Date()
+    .toISOString()
+    .replace(/[-T:.Z]/g, "")
+    .slice(0, 14);
 
-  // STEP 3.2 — Call Daraja STK push
-  const darajaRes = await stkPush(phone, amount, tx.id);
+  // 🔐 password required by Safaricom
+  const password = Buffer.from(
+    process.env.DARAJA_SHORTCODE +
+      process.env.DARAJA_PASSKEY +
+      timestamp
+  ).toString("base64");
 
-  // STEP 3.3 — 🔥 CRITICAL STEP (YOUR BUG FIXED HERE)
-  await supabase
-    .from("stk_transactions")
-    .update({
-      checkout_request_id: darajaRes.CheckoutRequestID,
-      merchant_request_id: darajaRes.MerchantRequestID,
-      status: "PENDING",
-    })
-    .eq("id", tx.id);
+  // 📦 payload sent to Daraja
+  const payload = {
+    BusinessShortCode: process.env.DARAJA_SHORTCODE,
+    Password: password,
+    Timestamp: timestamp,
+    TransactionType: "CustomerPayBillOnline",
+    Amount: amount,
+    PartyA: phone,
+    PartyB: process.env.DARAJA_SHORTCODE,
+    PhoneNumber: phone,
+    CallBackURL: process.env.DARAJA_CALLBACK_URL,
+    AccountReference: accountRef,
+    TransactionDesc: "Payment",
+  };
 
-  // STEP 3.4 — Add to queue (worker will handle follow-up)
-  await supabase.from("stk_queue").insert({
-    payment_request_id: tx.id,
-    business_id,
-    status: "PENDING",
-  });
+  // 🚀 send request
+  const response = await axios.post(
+    "https://sandbox.safaricom.co.ke/mpesa/stkpush/v1/processrequest",
+    payload,
+    {
+      headers: {
+        Authorization: `Bearer ${token}`,
+      },
+    }
+  );
 
-  // STEP 3.5 — Return response to frontend
-  return res.json({
-    success: true,
-    checkout_request_id: darajaRes.CheckoutRequestID,
-  });
+  return response.data;
 }
